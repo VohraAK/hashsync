@@ -4,18 +4,29 @@ import (
 	"crypto/sha256"
 	"io"
 	// "os"
-
 	// "bytes"
 	"log"
 	// "fmt"
 	"encoding/hex"
 
-	"github.com/VohraAK/hashsync/internal/types"
-
 	"github.com/jotfs/fastcdc-go"
 )
 
-func ChunkFile(file io.Reader) ([]types.Chunk, error) {
+// a chunk is a sequence of bytes with a size and associated hash
+type Chunk struct {		
+	Offset 	int
+	Hash 	string
+	Size 	int
+}
+
+// config for fastcdc-go chunking algorithm
+var FastCDCOpts = fastcdc.Options{
+    MinSize:     16 << 10,  // 16 KiB
+    AverageSize: 64 << 10,  // 64 KiB
+    MaxSize:     256 << 10, // 256 KiB
+}
+
+func ChunkFile(file io.Reader) ([]Chunk, error) {
 
 	// test function for warmups
 	// fastcdc.Chunk contains:
@@ -34,14 +45,14 @@ func ChunkFile(file io.Reader) ([]types.Chunk, error) {
 	// 	Fingerprint uint64
 	// }
 	
-	chunker, err := fastcdc.NewChunker(file, types.FastCDCOpts)
+	chunker, err := fastcdc.NewChunker(file, FastCDCOpts)
 
 	if err != nil {
 		log.Fatal("ERROR IN CREATING CHUNKER!")
 		return nil, err
 	}
 
-	chunks := []types.Chunk{}
+	chunks := []Chunk{}
 	
 	for {
 		chunk, err := chunker.Next()
@@ -56,7 +67,7 @@ func ChunkFile(file io.Reader) ([]types.Chunk, error) {
 
 		sum := sha256.Sum256(chunk.Data)
 		
-		chunks = append(chunks, types.Chunk{
+		chunks = append(chunks, Chunk{
 			Offset: chunk.Offset,
 			Hash: hex.EncodeToString(sum[:]),
 			Size: chunk.Length,
