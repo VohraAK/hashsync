@@ -2,6 +2,7 @@ package main
 
 import (
 	// "fmt"
+	"fmt"
 	"log"
 	"os"
 
@@ -10,9 +11,9 @@ import (
 )
 
 func main() {
-	filename := "test-dir"
+	fpath := "test-dir"
 
-	file, err := os.Open(filename)
+	file, err := os.Open(fpath)
 
 	if err != nil {
 		log.Fatal("ERROR IN READING FILE!")
@@ -31,8 +32,10 @@ func main() {
 	// 	fmt.Printf("%d: %+v\n", i, c) // %+v prints field names and values
 	// }
 
-	
-	root := &merkle.Node{}
-	root.CreateTree(filename)
+	root, err := merkle.BuildTree(fpath)
+	if err != nil {
+		fmt.Println("ERROR: %w", err)
+	}
+	root.Dump()
 
 }

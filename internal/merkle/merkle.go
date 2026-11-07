@@ -5,10 +5,11 @@
 package merkle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"log"
 	"os"
-	// "path/filepath"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -65,30 +66,131 @@ func (n *Node) getHashable() string {
 }
 
 /* 
-initialise a new Merkle Tree over the directory
+	initialise a new Merkle Tree over the directory
 */
-// FIX: to build a tree, start from the root node
-// 1. build a node for the current entry
-// 2. if current entry is a file, chunk&hash and store as file node
-// 3. if current entry is a folder, recursivelt build node
-func (n *Node) CreateTree(dirPath string) {
-	// assuming the caller has validated the path exists
-	dir, err := os.ReadDir(dirPath)
+func BuildTree(dirPath string) (*Node, error) {
+
+	// check if path is correct
+	rootInfo, err := os.Stat(dirPath)
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	// iterating over the entries
-	// top-level -> bottom-level
-	for _, e := range dir {
-		info, err := e.Info()
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fmt.Printf("%s | %t\n", info.Name(), info.IsDir())
-	}
+	return buildNode(dirPath, rootInfo) 
 }
 
+func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
+	// FIX: to build a tree, start from the root node
+	// 1. build a node for the current entry
+	// 2. if current entry is a file, chunk&hash and store as file node
+	// 3. if current entry is a folder, recursively build nodes for all children in the folder
+	n := &Node{
+		path: nPath,
+		name: filepath.Base(nPath),
+	}
+
+	if nInfo.IsDir() {
+		n.nodeType = FOLDER
+		
+		// make nodes of all the children
+		// read the dir with os.ReadDir to get a list of entires
+		entries, e := os.ReadDir(nPath)
+
+		if e != nil {
+			return nil, fmt.Errorf("could not read dir entries for %s\n | error: %w", nPath, e)
+		}
+
+		for _, entry := range entries {
+			info, e := entry.Info()	// get the file info
+
+			if e != nil {
+				return nil, fmt.Errorf("error for info %s | %w", entry.Name(), e)
+			}
+			
+			// make the child node and add to children list
+			child, e := buildNode(filepath.Join(nPath, entry.Name()), info)
+
+			if e != nil {
+                return nil, e
+            }
+
+			n.children = append(n.children, child)
+			n.size += child.size
+
+		}
+	} else {
+		n.nodeType = FILE
+		n.size = nInfo.Size()
+
+		// get chunks
+		chunks, e := chunkPath(nPath)
+
+		if e != nil {
+			return nil, fmt.Errorf("error! %s", e)
+		}
+
+		n.chunks = chunks
+
+	}
+
+	// get/set the node hash before returning
+	nHashSum := sha256.Sum256([]byte(n.getHashable()))
+	n.hash = hex.EncodeToString(nHashSum[:])
+
+	return n, nil
+}
+
+
+func chunkPath(fPath string) ([]chunker.Chunk, error) {
+	f, e := os.Open(fPath)
+
+	if e != nil {
+		return nil, fmt.Errorf("could not open file %s\n", fPath)
+	}
+
+	defer f.Close()
+
+	chunks, e := chunker.ChunkFile(f)
+
+	if e != nil {
+		return nil, fmt.Errorf("could not chunk file %s\n", fPath)
+	}
+
+	return chunks, nil
+}
+
+// dbg funcs
+// Dump prints the tree rooted at n in a `tree`-style layout
+func (n *Node) Dump() {
+    n.dump("", true, true)
+}
+
+func (n *Node) dump(prefix string, isLast, isRoot bool) {
+    if n == nil {
+        return
+    }
+
+    connector := ""
+    childPrefix := prefix
+    if !isRoot {
+        if isLast {
+            connector, childPrefix = "└── ", prefix+"    "
+        } else {
+            connector, childPrefix = "├── ", prefix+"│   "
+        }
+    }
+
+    switch n.nodeType {
+    case FOLDER:
+        fmt.Printf("%s%s%s/  (%d B, %d children)  %.8s\n",
+            prefix, connector, n.name, n.size, len(n.children), n.hash)
+    case FILE:
+        fmt.Printf("%s%s%s  (%d B, %d chunks)  %.8s\n",
+            prefix, connector, n.name, n.size, len(n.chunks), n.hash)
+    }
+
+    for i, c := range n.children {
+        c.dump(childPrefix, i == len(n.children)-1, false)
+    }
+}
