@@ -5,10 +5,12 @@
 package merkle
 
 import (
+	"os"
+	"time"
+	"log/slog"
+	"fmt"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +26,18 @@ const (
 	FILE NodeType = iota
 	FOLDER
 )
+
+// converts the enum type to literal strings
+func (t NodeType) String() string {
+	switch t {
+	case FILE:
+		return "FILE"
+	case FOLDER:
+		return "FOLDER"
+	default:
+		return fmt.Sprintf("NodeType(%d)", int(t))
+	}
+}
 
 // Node struct for merkle tree
 type Node struct {
@@ -79,7 +93,27 @@ func BuildTree(dirPath string) (*Node, error) {
 		return nil, err
 	}
 
-	return buildNode(dirPath, rootInfo) 
+	slog.Info("building merkle tree",
+		slog.String("path", dirPath),
+	)
+
+	timeStart := time.Now()
+	rootNode, err := buildNode(dirPath, rootInfo)
+
+	if err != nil {
+		return nil, err
+	}
+
+	duration := time.Since(timeStart)
+
+	slog.Info("tree built", 
+		slog.String("duration", duration.String()),
+		slog.String("root_hash", rootNode.hash),
+		slog.Int64("root_size", (rootNode.size/(1024))),
+	)
+
+	return rootNode, err
+
 }
 
 func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
@@ -129,7 +163,7 @@ func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
 		chunks, e := chunkPath(nPath)
 
 		if e != nil {
-			return nil, fmt.Errorf("error! %s", e)
+			return nil, fmt.Errorf("could not chunk path! %w", e)
 		}
 
 		n.chunks = chunks
@@ -140,6 +174,14 @@ func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
 	nHashSum := sha256.Sum256([]byte(n.getHashable()))
 	n.hash = hex.EncodeToString(nHashSum[:])
 
+	slog.Debug("node created",
+		slog.String("path", nPath),
+		slog.String("type", n.nodeType.String()),
+		slog.Int64("size", n.size),
+		slog.String("hash", n.hash),
+
+)
+
 	return n, nil
 }
 
@@ -148,7 +190,7 @@ func chunkPath(fPath string) ([]chunker.Chunk, error) {
 	f, e := os.Open(fPath)
 
 	if e != nil {
-		return nil, fmt.Errorf("could not open file %s\n", fPath)
+		return nil, fmt.Errorf("could not open file %s | error: %w", fPath, e)
 	}
 
 	defer f.Close()
@@ -156,7 +198,7 @@ func chunkPath(fPath string) ([]chunker.Chunk, error) {
 	chunks, e := chunker.ChunkFile(f)
 
 	if e != nil {
-		return nil, fmt.Errorf("could not chunk file %s\n", fPath)
+		return nil, fmt.Errorf("could not chunk file %s | error: %w", fPath, e)
 	}
 
 	return chunks, nil
