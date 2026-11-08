@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	// "unsafe"
+
 	"github.com/VohraAK/hashsync/internal/chunker"
 )
 

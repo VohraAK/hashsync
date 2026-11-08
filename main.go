@@ -1,22 +1,27 @@
 package main
 
 import (
-	// "fmt"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 
-	// "github.com/VohraAK/hashsync/internal/chunker"
+	"github.com/VohraAK/hashsync/internal/logger"
 	"github.com/VohraAK/hashsync/internal/merkle"
 )
 
 func main() {
-	fpath := "test-dir"
+
+	logger.Init()
+
+	fpath := "/Users/abdullah/Desktop"
 
 	file, err := os.Open(fpath)
 
 	if err != nil {
-		log.Fatal("ERROR IN READING FILE!")
+		slog.Error("could not read file",
+			slog.String("error", err.Error()),
+		)
 	}
 
 	defer file.Close()
@@ -34,8 +39,9 @@ func main() {
 
 	root, err := merkle.BuildTree(fpath)
 	if err != nil {
-		fmt.Println("ERROR: %w", err)
+		slog.Error("error in building tree",
+			slog.String("error", err.Error()),
+		)
 	}
 	root.Dump()
-
 }
