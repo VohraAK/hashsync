@@ -109,7 +109,7 @@ func BuildTree(dirPath string) (*Node, error) {
 	slog.Info("tree built", 
 		slog.String("duration", duration.String()),
 		slog.String("root_hash", rootNode.hash),
-		slog.Int64("root_size", (rootNode.size/(1024))),
+		slog.Int64("root_size", rootNode.size),
 	)
 
 	return rootNode, err
