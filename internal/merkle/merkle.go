@@ -50,9 +50,15 @@ type Node struct {
 	children 	[]*Node				// only for FOLDER nodes; stores all children nodes as rer in SORTED ORDER
 }
 
+// Tree wrapper for the root node
+type Tree struct {
+	root		*Node
+	// could add a path-to-node mapping in the future for faster lookups
+}
+
 /*
-getHashable returns a hash input string for node contents branched on node type
- */
+	getHashable returns a hash input string for node contents branched on node type
+*/
 func (n *Node) getHashable() string {
 	if n == nil {
 		return ""
@@ -81,10 +87,33 @@ func (n *Node) getHashable() string {
 	return sb.String()
 }
 
+func (n *Node) walk(startPath string) []*Node {
+	return nil
+}
+
+func chunkPath(fPath string) ([]chunker.Chunk, error) {
+	f, e := os.Open(fPath)
+
+	if e != nil {
+		return nil, fmt.Errorf("could not open file %s | error: %w", fPath, e)
+	}
+
+	defer f.Close()
+
+	chunks, e := chunker.ChunkFile(f)
+
+	if e != nil {
+		return nil, fmt.Errorf("could not chunk file %s | error: %w", fPath, e)
+	}
+	
+	return chunks, nil
+}
+
+
 /* 
 	initialise a new Merkle Tree over the directory
 */
-func BuildTree(dirPath string) (*Node, error) {
+func BuildTree(dirPath string) (*Tree, error) {
 
 	// check if path is correct
 	rootInfo, err := os.Stat(dirPath)
@@ -108,33 +137,31 @@ func BuildTree(dirPath string) (*Node, error) {
 
 	slog.Info("tree built", 
 		slog.String("duration", duration.String()),
-		slog.String("root_hash", rootNode.hash),
-		slog.Int64("root_size", rootNode.size),
 	)
 
-	return rootNode, err
+	return &Tree{root: rootNode}, err
 
 }
 
-func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
+func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
 	// FIX: to build a tree, start from the root node
 	// 1. build a node for the current entry
 	// 2. if current entry is a file, chunk&hash and store as file node
 	// 3. if current entry is a folder, recursively build nodes for all children in the folder
 	n := &Node{
-		path: nPath,
-		name: filepath.Base(nPath),
+		path: nodePath,
+		name: filepath.Base(nodePath),
 	}
 
-	if nInfo.IsDir() {
+	if nodeInfo.IsDir() {
 		n.nodeType = FOLDER
 		
 		// make nodes of all the children
 		// read the dir with os.ReadDir to get a list of entires
-		entries, e := os.ReadDir(nPath)
+		entries, e := os.ReadDir(nodePath)
 
 		if e != nil {
-			return nil, fmt.Errorf("could not read dir entries for %s\n | error: %w", nPath, e)
+			return nil, fmt.Errorf("could not read dir entries for %s\n | error: %w", nodePath, e)
 		}
 
 		for _, entry := range entries {
@@ -145,7 +172,7 @@ func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
 			}
 			
 			// make the child node and add to children list
-			child, e := buildNode(filepath.Join(nPath, entry.Name()), info)
+			child, e := buildNode(filepath.Join(nodePath, entry.Name()), info)
 
 			if e != nil {
                 return nil, e
@@ -157,10 +184,10 @@ func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
 		}
 	} else {
 		n.nodeType = FILE
-		n.size = nInfo.Size()
+		n.size = nodeInfo.Size()
 
 		// get chunks
-		chunks, e := chunkPath(nPath)
+		chunks, e := chunkPath(nodePath)
 
 		if e != nil {
 			return nil, fmt.Errorf("could not chunk path! %w", e)
@@ -175,39 +202,48 @@ func buildNode(nPath string, nInfo os.FileInfo) (*Node, error) {
 	n.hash = hex.EncodeToString(nHashSum[:])
 
 	slog.Debug("node created",
-		slog.String("path", nPath),
-		slog.String("type", n.nodeType.String()),
+		slog.String("path", nodePath),
 		slog.Int64("size", n.size),
 		slog.String("hash", n.hash),
-
-)
+	)
 
 	return n, nil
 }
 
 
-func chunkPath(fPath string) ([]chunker.Chunk, error) {
-	f, e := os.Open(fPath)
+// tree primitive operations
+// 1. insert a new node in the tree
+// 2. update a node in the tree
+// 3. delete a node from the tree
 
-	if e != nil {
-		return nil, fmt.Errorf("could not open file %s | error: %w", fPath, e)
-	}
+// insert the new node at the provided path.
+// always occur in an existing folder node (the root or a folder node)
+// wraps buildNode
+func (t *Tree) Insert(nodePath string) (*Node, error) {
 
-	defer f.Close()
+	// check if path exists
+	// nodeInfo, err := os.Stat(nodePath)
 
-	chunks, e := chunker.ChunkFile(f)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	if e != nil {
-		return nil, fmt.Errorf("could not chunk file %s | error: %w", fPath, e)
-	}
+	// // check if node exists in tree -> walk and get list of ancestors
+	// // call buildNode
+	// // walk the tree and find parent node
+	// // add node in children (as sorted)
+	// // resize and rehash up the chain of ancestors
 
-	return chunks, nil
+
+	// // return node, err
+	return nil, nil
 }
+
 
 // dbg funcs
 // Dump prints the tree rooted at n in a `tree`-style layout
-func (n *Node) Dump() {
-    n.dump("", true, true)
+func (t *Tree) Dump() {
+    t.root.dump("", true, true)
 }
 
 func (n *Node) dump(prefix string, isLast, isRoot bool) {
