@@ -122,12 +122,20 @@ func BuildTree(dirPath string) (*Tree, error) {
 		return nil, err
 	}
 
+	// TODO: make the dirPath absolute while building the tree
+	// all nodes will have abs paths
+	dirAbsPath, err := filepath.Abs(dirPath)
+
+	if err != nil {
+		return nil, err
+	}
+
 	slog.Info("building merkle tree",
-		slog.String("path", dirPath),
+		slog.String("path", dirAbsPath),
 	)
 
 	timeStart := time.Now()
-	rootNode, err := buildNode(dirPath, rootInfo)
+	rootNode, err := buildNode(dirAbsPath, rootInfo)
 
 	if err != nil {
 		return nil, err
@@ -144,7 +152,7 @@ func BuildTree(dirPath string) (*Tree, error) {
 }
 
 func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
-	// FIX: to build a tree, start from the root node
+	// to build a tree, start from the root node
 	// 1. build a node for the current entry
 	// 2. if current entry is a file, chunk&hash and store as file node
 	// 3. if current entry is a folder, recursively build nodes for all children in the folder
@@ -263,11 +271,11 @@ func (n *Node) dump(prefix string, isLast, isRoot bool) {
 
     switch n.nodeType {
     case FOLDER:
-        fmt.Printf("%s%s%s/  (%d B, %d children)  %.8s\n",
-            prefix, connector, n.name, n.size, len(n.children), n.hash)
+        fmt.Printf("%s%s%s/  (%d B, %d children)  %.8s [%s]\n",
+            prefix, connector, n.name, n.size, len(n.children), n.hash, n.path)
     case FILE:
-        fmt.Printf("%s%s%s  (%d B, %d chunks)  %.8s\n",
-            prefix, connector, n.name, n.size, len(n.chunks), n.hash)
+        fmt.Printf("%s%s%s  (%d B, %d chunks)  %.8s [%s]\n",
+            prefix, connector, n.name, n.size, len(n.chunks), n.hash, n.path)
     }
 
     for i, c := range n.children {

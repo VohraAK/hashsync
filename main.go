@@ -12,7 +12,7 @@ func main() {
 
 	logger.Init()
 
-	fpath := "/users/abdullah/Desktop/"
+	fpath := "./"
 
 	file, err := os.Open(fpath)
 
@@ -24,11 +24,13 @@ func main() {
 
 	defer file.Close()
 
-	_, err = merkle.BuildTree(fpath)
+	root, err := merkle.BuildTree(fpath)
 	if err != nil {
 		slog.Error("error in building tree",
 			slog.String("error", err.Error()),
 		)
+		return
 	}
-	// root.Dump()
+	
+	root.Dump()
 }
