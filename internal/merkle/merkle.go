@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -87,9 +88,6 @@ func (n *Node) getHashable() string {
 	return sb.String()
 }
 
-func (n *Node) walk(startPath string) []*Node {
-	return nil
-}
 
 func chunkPath(fPath string) ([]chunker.Chunk, error) {
 	f, e := os.Open(fPath)
@@ -113,10 +111,11 @@ func chunkPath(fPath string) ([]chunker.Chunk, error) {
 /* 
 	initialise a new Merkle Tree over the directory
 */
-func BuildTree(dirPath string) (*Tree, error) {
-
+func BuildTree(rootPath string) (*Tree, error) {
+	
+	// dirPath is the path to the root dir being watched
 	// check if path is correct
-	rootInfo, err := os.Stat(dirPath)
+	rootInfo, err := os.Stat(rootPath)
 
 	if err != nil {
 		return nil, err
@@ -124,18 +123,18 @@ func BuildTree(dirPath string) (*Tree, error) {
 
 	// TODO: make the dirPath absolute while building the tree
 	// all nodes will have abs paths
-	dirAbsPath, err := filepath.Abs(dirPath)
+	rootAbsPath, err := filepath.Abs(rootPath)
 
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info("building merkle tree",
-		slog.String("path", dirAbsPath),
+		slog.String("path", rootAbsPath),
 	)
 
 	timeStart := time.Now()
-	rootNode, err := buildNode(dirAbsPath, rootInfo)
+	rootNode, err := buildNode(rootAbsPath, rootInfo)
 
 	if err != nil {
 		return nil, err
@@ -152,6 +151,7 @@ func BuildTree(dirPath string) (*Tree, error) {
 }
 
 func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
+
 	// to build a tree, start from the root node
 	// 1. build a node for the current entry
 	// 2. if current entry is a file, chunk&hash and store as file node
@@ -224,28 +224,101 @@ func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
 // 2. update a node in the tree
 // 3. delete a node from the tree
 
+// walk follows path down the tree (memory only, never touches the disk).
+// found == true:  chain ends at the target node, index is its position in its parent's children.
+// found == false: chain ends at the parent, index is the sorted insertion position for the target.
+// a missing final component is a normal result, not an error.
+func (t *Tree) walk(path string) (chain []*Node, index int, found bool, err error) {
+	if t.root == nil {
+		return nil, 0, false, fmt.Errorf("walk %q: tree root is nil", path)
+	}
+
+	// make path relative to the root and reject anything outside of it
+	sep := string(filepath.Separator)
+	rel, err := filepath.Rel(t.root.path, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+sep) {
+		return nil, 0, false, fmt.Errorf("walk %q: path must be absolute and under the tree root %q", path, t.root.path)
+	}
+
+	// path is the root itself: return chain with root only
+	if rel == "." {
+		return []*Node{t.root}, 0, true, nil
+	}
+
+	chain = []*Node{t.root}
+	current := t.root
+	comps := strings.Split(rel, sep)
+
+	for i, comp := range comps {
+		// can only descend into folders
+		if current.nodeType == FILE {
+			return nil, 0, false, fmt.Errorf("walk %q: %q is not a folder", path, current.path)
+		}
+
+		idx, ok := current.search(comp)
+		last := i == len(comps) - 1
+
+		switch {
+		case ok && last:
+			// target found
+			chain = append(chain, current.children[idx])
+			return chain, idx, true, nil
+		case ok:
+			// found an intermediate folder, keep descending
+			current = current.children[idx]
+			chain = append(chain, current)
+		case last:
+			// target missing, but its parent exists: not an error
+			return chain, idx, false, nil
+		default:
+			return nil, 0, false, fmt.Errorf("walk %q: parent folder %q not in tree", path, comp)
+		}
+	}
+
+	// unreachable: the loop always returns on the last component
+	return nil, 0, false, fmt.Errorf("walk %q: no path components", path)
+}
+
+// search binary-searches n.children (sorted bytewise by name) for name.
+// if found, returns its index and true.
+// if not, returns the sorted insertion index and false.
+func (n *Node) search(name string) (int, bool) {
+	// smallest i where children[i].name >= name (Go string compare is bytewise)
+	i := sort.Search(len(n.children), func(i int) bool {
+		return n.children[i].name >= name
+	})
+
+	found := i < len(n.children) && n.children[i].name == name
+	return i, found
+}
+
 // insert the new node at the provided path.
-// always occur in an existing folder node (the root or a folder node)
-// wraps buildNode
+// inserts the new node inside an existing folder node
 func (t *Tree) Insert(nodePath string) (*Node, error) {
 
-	// check if path exists
-	// nodeInfo, err := os.Stat(nodePath)
+	// check if the path exists
+	// check if node exists in tree -> walk and get list of ancestors
+	// call buildNode
+	// add node in children of its parent(as sorted)
+	// resize and rehash up the chain of ancestors
 
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// // check if node exists in tree -> walk and get list of ancestors
-	// // call buildNode
-	// // walk the tree and find parent node
-	// // add node in children (as sorted)
-	// // resize and rehash up the chain of ancestors
-
-
-	// // return node, err
 	return nil, nil
 }
+
+// modify the node at the provided path.
+// the node MUST exist to be updated
+func (t *Tree) Update(nodePath string) (*Node, error) {
+
+	return nil, nil
+}
+
+// delete the node at the provided path.
+func (t *Tree) Delete(nodePath string) (bool, error) {
+
+	return false, nil
+}
+
+
 
 
 // dbg funcs
