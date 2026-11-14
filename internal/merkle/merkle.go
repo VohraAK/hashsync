@@ -399,6 +399,7 @@ func (t *Tree) Insert(nodePath string) (*Node, error) {
 // NOTE: FOLDER nodes' hash only changes on changes in the children, so no FOLDER updates.
 // renames are handled differently due to file watcher functionality (DELETE old path, INSERT new path)
 func (t *Tree) Update(nodePath string) (*Node, error) {
+
 	if t == nil {
 		return nil, fmt.Errorf("Update [%s]: tree is nil!", nodePath)
 	}
@@ -408,7 +409,6 @@ func (t *Tree) Update(nodePath string) (*Node, error) {
 	// check if the path exists
 	nodeInfo, err := os.Stat(nodePath)
 
-	
 	if err != nil {
 		return nil, fmt.Errorf("Update [%s]: path error! %w", nodePath ,err)
 	}
@@ -423,15 +423,16 @@ func (t *Tree) Update(nodePath string) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Update [%s]: could not update! | %w", nodePath, err)
 	}
+	
+	// deny updates on root
+	if len(chain) == 1 {
+		return nil, fmt.Errorf("Update [%s]: cannot update root!", nodePath)
+	}
 
 	if !found {
 		return nil, fmt.Errorf("Update [%s]: could not find node!", nodePath)
 	}
 
-	// deny updates on root
-	if len(chain) == 1 {
-		return nil, fmt.Errorf("Update [%s]: cannot update root!", nodePath)
-	}
 
 	nodeForUpdate := chain[len(chain)-1]
 
@@ -456,10 +457,43 @@ func (t *Tree) Update(nodePath string) (*Node, error) {
 	return nodeForUpdate, nil
 }
 
-// delete the node at the provided path.
+// delete the node at the provided path
+// also deletes the whole subtree
 func (t *Tree) Delete(nodePath string) (bool, error) {
 
-	return false, nil
+	if t == nil {
+		return false, fmt.Errorf("Delete [%s]: tree is nil!", nodePath)
+	}
+
+	nodePath = filepath.Clean(nodePath)
+
+	chain, index, found, err := t.walk(nodePath)
+
+	if err != nil {
+		return false, fmt.Errorf("Delete [%s]: could not delete! | %w", nodePath, err)
+	}
+
+	if !found {
+		return false, fmt.Errorf("Delete [%s]: could not find node to delete!", nodePath)
+	}
+	
+	// deny root delete
+	if len(chain) == 1 {
+		return false, fmt.Errorf("Delete [%s]: cannot delete root!", nodePath)
+	}
+
+
+	// remove the node from parent's children
+	parentNode := chain[len(chain)-2]
+	parentNode.children = slices.Delete(parentNode.children, index, index+1)
+
+	// rehash on all-but-last nodes
+	err = rehash(chain[:len(chain)-1])
+	if err != nil {
+		return false, fmt.Errorf("Delete [%s]: could not rehash! %w", nodePath, err)
+	}
+
+	return true, nil
 }
 
 
