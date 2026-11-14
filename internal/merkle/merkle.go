@@ -17,8 +17,6 @@ import (
 	"strings"
 	"slices"
 
-	// "unsafe"
-
 	"github.com/VohraAK/hashsync/internal/chunker"
 )
 
@@ -155,8 +153,6 @@ func BuildTree(rootPath string) (*Tree, error) {
 		return nil, err
 	}
 
-	// TODO: make the dirPath absolute while building the tree
-	// all nodes will have abs paths
 	rootAbsPath, err := filepath.Abs(rootPath)
 
 	if err != nil {
@@ -396,11 +392,68 @@ func (t *Tree) Insert(nodePath string) (*Node, error) {
 	return node, nil
 }
 
+// something changed for the file node
 // modify the node at the provided path.
 // the node MUST exist to be updated
+// root must NEVER be updated or deleted
+// NOTE: FOLDER nodes' hash only changes on changes in the children, so no FOLDER updates.
+// renames are handled differently due to file watcher functionality (DELETE old path, INSERT new path)
 func (t *Tree) Update(nodePath string) (*Node, error) {
+	if t == nil {
+		return nil, fmt.Errorf("Update [%s]: tree is nil!", nodePath)
+	}
 
-	return nil, nil
+	nodePath = filepath.Clean(nodePath)
+
+	// check if the path exists
+	nodeInfo, err := os.Stat(nodePath)
+
+	
+	if err != nil {
+		return nil, fmt.Errorf("Update [%s]: path error! %w", nodePath ,err)
+	}
+
+	if nodeInfo.IsDir() {
+		return nil, fmt.Errorf("Update [%s]: cannot update folders!", nodePath)
+	}
+
+	// check if node exists in tree -> walk and get list of ancestors
+	chain, _, found, err := t.walk(nodePath)
+
+	if err != nil {
+		return nil, fmt.Errorf("Update [%s]: could not update! | %w", nodePath, err)
+	}
+
+	if !found {
+		return nil, fmt.Errorf("Update [%s]: could not find node!", nodePath)
+	}
+
+	// deny updates on root
+	if len(chain) == 1 {
+		return nil, fmt.Errorf("Update [%s]: cannot update root!", nodePath)
+	}
+
+	nodeForUpdate := chain[len(chain)-1]
+
+	// deny updates on folders
+	if nodeForUpdate.nodeType == FOLDER {
+		return nil, fmt.Errorf("Update [%s]: cannot update folders!", nodePath)
+	}
+
+	updatedChunks, err := chunkPath(nodePath)
+	if err != nil {
+		return nil, fmt.Errorf("Update [%s]: error in chunking contents! | %w", nodePath, err)
+	}
+	nodeForUpdate.chunks = updatedChunks
+	nodeForUpdate.size = nodeInfo.Size()
+
+	// rehash
+	err = rehash(chain)
+	if err != nil {
+		return nil, fmt.Errorf("Update [%s]: could not rehash! %w", nodePath, err)
+	}
+
+	return nodeForUpdate, nil
 }
 
 // delete the node at the provided path.
