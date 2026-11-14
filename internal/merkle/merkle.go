@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"slices"
 
 	// "unsafe"
 
@@ -60,9 +61,9 @@ type Tree struct {
 /*
 	getHashable returns a hash input string for node contents branched on node type
 */
-func (n *Node) getHashable() string {
+func (n *Node) getHashable() (string, error) {
 	if n == nil {
-		return ""
+		return "", fmt.Errorf("getHashable: node is nil")
 	}
 
 	var sb strings.Builder;
@@ -85,9 +86,42 @@ func (n *Node) getHashable() string {
 			}
 	}
 
-	return sb.String()
+	return sb.String(), nil
 }
 
+/*
+	hashNode computes the hash of a Node and stores it in Node.hash
+*/
+func (n *Node) hashNode() error {
+	hashable, err := n.getHashable()
+	if err != nil {
+		return fmt.Errorf("hashNode [%s]: %w", n.path, err)
+	}
+
+	nHashSum := sha256.Sum256([]byte(hashable))
+	n.hash = hex.EncodeToString(nHashSum[:])
+
+	return nil
+}
+
+/*
+	refreshNode wraps around hashNode, handling all types of nodes
+*/
+func (n* Node) refreshNode() error {
+	switch n.nodeType {		
+		case FOLDER:
+			// recompute sizes first, reset to zero first
+			n.size = 0
+			for _, c := range n.children { n.size += c.size }
+	}
+
+	err := n.hashNode()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func chunkPath(fPath string) ([]chunker.Chunk, error) {
 	f, e := os.Open(fPath)
@@ -187,7 +221,6 @@ func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
             }
 
 			n.children = append(n.children, child)
-			n.size += child.size
 
 		}
 	} else {
@@ -205,9 +238,11 @@ func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
 
 	}
 
-	// get/set the node hash before returning
-	nHashSum := sha256.Sum256([]byte(n.getHashable()))
-	n.hash = hex.EncodeToString(nHashSum[:])
+	// refresh the node (resizes for FOLDER and hashes the node)
+	err := n.refreshNode()
+	if err != nil {
+		return nil, fmt.Errorf("error for path %s | %w", nodePath, err)
+	}
 
 	slog.Debug("node created",
 		slog.String("path", nodePath),
@@ -227,7 +262,7 @@ func buildNode(nodePath string, nodeInfo os.FileInfo) (*Node, error) {
 // walk follows path down the tree (memory only, never touches the disk).
 // found == true:  chain ends at the target node, index is its position in its parent's children.
 // found == false: chain ends at the parent, index is the sorted insertion position for the target.
-// a missing final component is a normal result, not an error.
+// final components can be missing (insert will require this, update and delete need the final component)
 func (t *Tree) walk(path string) (chain []*Node, index int, found bool, err error) {
 	if t.root == nil {
 		return nil, 0, false, fmt.Errorf("walk %q: tree root is nil", path)
@@ -279,6 +314,22 @@ func (t *Tree) walk(path string) (chain []*Node, index int, found bool, err erro
 	return nil, 0, false, fmt.Errorf("walk %q: no path components", path)
 }
 
+// rehashing function which takes a chain of nodes, and recomputes hashes for all hashes (in reverse order, from leaf-to-root)
+func rehash(chain []*Node) error {
+	if chain == nil {
+		return fmt.Errorf("rehash: chain is nil")
+	}
+
+	for _, n := range slices.Backward(chain) {
+		err := n.refreshNode()
+		if err != nil {
+			return fmt.Errorf("rehash: error in chain! | %w", err)
+		}
+	} 
+
+	return nil
+}
+
 // search binary-searches n.children (sorted bytewise by name) for name.
 // if found, returns its index and true.
 // if not, returns the sorted insertion index and false.
@@ -296,13 +347,53 @@ func (n *Node) search(name string) (int, bool) {
 // inserts the new node inside an existing folder node
 func (t *Tree) Insert(nodePath string) (*Node, error) {
 
-	// check if the path exists
-	// check if node exists in tree -> walk and get list of ancestors
-	// call buildNode
-	// add node in children of its parent(as sorted)
-	// resize and rehash up the chain of ancestors
+	if t == nil {
+		return nil, fmt.Errorf("Insert [%s]: tree is nil!", nodePath)
+	}
 
-	return nil, nil
+	// clean nodePath (just in case)
+	nodePath = filepath.Clean(nodePath)
+
+	// check if the path exists
+	info, err := os.Stat(nodePath)
+
+	if err != nil {
+		return nil, fmt.Errorf("Insert [%s]: path error! %w", nodePath ,err)
+	}
+
+	// check if node exists in tree -> walk and get list of ancestors
+	chain, index, found, err := t.walk(nodePath)
+
+	if err != nil {
+		return nil, fmt.Errorf("Insert [%s]: could not insert! %w", nodePath, err)
+	}
+
+	// do not insert if found
+	if found {
+		return nil, fmt.Errorf("Insert [%s]: node already present!", nodePath)
+	}
+
+	// not found, index stores the sorted position of new node
+	// call buildNode
+	node, err := buildNode(nodePath, info)
+
+	if err != nil {
+		return nil, fmt.Errorf("Insert [%s]: could not build node! %w", nodePath, err)
+	}
+
+	// add node in children of its parent(as sorted)
+	// parent node will be the last node in the chain if node is not found
+	parentNode := chain[len(chain)-1]
+	parentNode.children = slices.Insert(parentNode.children, index, node)
+
+	// resize and rehash up the chain of ancestors
+	err = rehash(chain)
+
+	if err != nil {
+		return nil, fmt.Errorf("Insert [%s]: could not rehash! %w", nodePath, err)
+	}
+
+	return node, nil
 }
 
 // modify the node at the provided path.

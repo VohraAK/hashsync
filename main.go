@@ -12,7 +12,7 @@ func main() {
 
 	logger.Init()
 
-	fpath := "./"
+	fpath := "./test-dir"
 
 	file, err := os.Open(fpath)
 
